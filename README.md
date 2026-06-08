@@ -47,7 +47,7 @@
 需要 macOS 自带的 Swift 工具链（装了 Xcode 或 Command Line Tools 即可，`xcode-select --install`）。
 
 ```bash
-git clone https://github.com/<你的用户名>/InputSwitcher.git
+git clone https://github.com/fmfeng/InputSwitcher.git
 cd InputSwitcher
 bash build.sh
 ```
