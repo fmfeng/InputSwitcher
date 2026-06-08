@@ -56,9 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
-    // MARK: - 开机自启
+    // MARK: - 开机自启（需 macOS 13+）
 
     private func enableLoginItemIfFirstRun() {
+        guard #available(macOS 13.0, *) else { return }
         let key = "didSetupLoginItem"
         if !UserDefaults.standard.bool(forKey: key) {
             try? SMAppService.mainApp.register()
@@ -67,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleLoginItem() {
+        guard #available(macOS 13.0, *) else { return }
         let svc = SMAppService.mainApp
         do {
             if svc.status == .enabled {
@@ -196,7 +198,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenuItem.title = enabled
             ? "当前：运行中（\(Config.shared.ruleSet.rules.count) 条规则）"
             : "当前：已暂停"
-        loginItemMenuItem.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        if #available(macOS 13.0, *) {
+            loginItemMenuItem.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        } else {
+            loginItemMenuItem.isHidden = true
+        }
     }
 
     private func updateDebugMenu(hit: String) {
