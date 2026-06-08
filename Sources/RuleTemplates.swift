@@ -4,7 +4,7 @@ import Foundation
 enum RuleTemplates {
 
     private static let EN = "com.apple.keylayout.ABC"
-    private static let ZH = "com.bytedance.inputmethod.doubaoime.pinyin"
+    private static let ZH = "com.apple.inputmethod.SCIM.ITABC"
 
     struct Template {
         let menuTitle: String

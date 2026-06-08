@@ -179,7 +179,7 @@ final class RuleEditorSheet: NSObject {
 
     private func populateForEditing() {
         // 选中默认输入法（编辑时回填，新增时默认中文豆包）
-        let defaultIME = editing?.inputSource ?? "com.bytedance.inputmethod.doubaoime.pinyin"
+        let defaultIME = editing?.inputSource ?? "com.apple.inputmethod.SCIM.ITABC"
         if let idx = imeItems.firstIndex(where: { $0.id == defaultIME }) {
             imePopup.selectItem(at: idx)
         }
@@ -221,7 +221,7 @@ final class RuleEditorSheet: NSObject {
     @objc private func save() {
         let t = RuleType(rawValue: typePopup.indexOfSelectedItem) ?? .app
         let ime = imeItems[safe: imePopup.indexOfSelectedItem]?.id
-            ?? "com.bytedance.inputmethod.doubaoime.pinyin"
+            ?? "com.apple.inputmethod.SCIM.ITABC"
 
         var rule = Rule(name: "", bundleId: nil, domClassAny: nil,
                         webTitleRegex: nil, urlRegex: nil, role: nil, inputSource: ime)
