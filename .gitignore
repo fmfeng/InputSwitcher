@@ -1,0 +1,18 @@
+# 编译产物
+*.o
+*.dSYM/
+/build/
+/dist/
+*.app/
+*.zip
+
+# macOS
+.DS_Store
+
+# 个人配置（用户运行后生成在 ~/.config，不应进仓库）
+rules.json
+inputswitcher.log
+
+# 编辑器
+.vscode/
+.idea/
