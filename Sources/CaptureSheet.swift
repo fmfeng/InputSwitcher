@@ -13,13 +13,17 @@ final class CaptureSheet: NSObject {
     private let precisionPopup = NSPopUpButton()
     private let imePopup = NSPopUpButton()
     private let nameField = NSTextField()
+    private let warningLabel = NSTextField(labelWithString: "")
 
     private var imeItems: [InputSource.Item] = []
     private var options: [PrecisionOption] = []
 
-    /// 一个「匹配精确度」选项：人话标题 + 如何生成规则
+    /// 一个候选规则选项：人话标题 + 如何生成规则。
+    /// rank 越小越推荐（越独特、越不容易撞车）。warning 非空时给出冲突提示。
     private struct PrecisionOption {
         let title: String
+        let rank: Int
+        let warning: String?
         let build: (_ ime: String, _ name: String) -> Rule
     }
 
@@ -33,7 +37,7 @@ final class CaptureSheet: NSObject {
 
     func makeWindow() -> NSWindow {
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
             styleMask: [.titled], backing: .buffered, defer: false)
         window.title = "根据捕获的焦点添加规则"
         buildOptions()
@@ -41,7 +45,7 @@ final class CaptureSheet: NSObject {
         return window
     }
 
-    // MARK: - 根据捕获内容生成「精确度」候选
+    // MARK: - 根据捕获内容生成候选「识别依据」
 
     private func buildOptions() {
         options.removeAll()
@@ -49,45 +53,79 @@ final class CaptureSheet: NSObject {
         let host = effectiveHost()
         let appName = ctx.appName.isEmpty ? ctx.bundleId : ctx.appName
         let primaryClass = CaptureSheet.primaryClass(ctx.domClasses)
+        let descKeyword = CaptureSheet.descKeyword(ctx.axDescription)
 
-        // 有 DOM class（网页/Electron 里的某类控件）
+        // ① 最稳：控件描述（desc）——语义化、最耐升级，且通常最独特
+        //    例如 AI 聊天框 desc 含 "Chat Input"，终端含运行的命令名
+        if let kw = descKeyword {
+            options.append(PrecisionOption(
+                title: "靠控件描述「\(kw)」识别（最稳，推荐）",
+                rank: 0, warning: nil) { ime, name in
+                Rule(name: name, descRegex: NSRegularExpression.escapedPattern(for: kw), inputSource: ime)
+            })
+        }
+
+        // ② DOM class —— 较稳，但可能与别的区域撞车，检测冲突
         if let cls = primaryClass {
-            options.append(PrecisionOption(title: "这一类输入框，在任何地方都算（推荐）") { ime, name in
+            let conflict = CaptureSheet.classConflict(cls)
+            let warn = conflict.map { "⚠️ 此类型与已有规则「\($0)」相同，可能互相干扰" }
+            let rank = conflict == nil ? 1 : 5   // 撞车则排后面
+            let recommend = (descKeyword == nil && conflict == nil) ? "（推荐）" : ""
+            options.append(PrecisionOption(
+                title: "靠控件类型识别，在任何地方都算\(recommend)",
+                rank: rank, warning: warn) { ime, name in
                 Rule(name: name, domClassAny: [cls], inputSource: ime)
             })
-            if !host.isEmpty {
-                options.append(PrecisionOption(title: "仅「\(host)」网站上的这类输入框") { ime, name in
-                    Rule(name: name, domClassAny: [cls],
-                         urlRegex: NSRegularExpression.escapedPattern(for: host), inputSource: ime)
-                })
-            }
-            if !ctx.bundleId.isEmpty {
-                options.append(PrecisionOption(title: "仅「\(appName)」应用里的这类输入框") { ime, name in
-                    Rule(name: name, bundleId: self.ctx.bundleId, domClassAny: [cls], inputSource: ime)
-                })
+            // class + 限定网站/应用（缩小范围，降低撞车影响）
+            if let conflict = conflict {
+                _ = conflict
+                if !host.isEmpty {
+                    options.append(PrecisionOption(
+                        title: "靠控件类型 + 仅「\(host)」网站",
+                        rank: 3, warning: nil) { ime, name in
+                        Rule(name: name, domClassAny: [cls],
+                             urlRegex: NSRegularExpression.escapedPattern(for: host), inputSource: ime)
+                    })
+                }
+                if !ctx.bundleId.isEmpty {
+                    options.append(PrecisionOption(
+                        title: "靠控件类型 + 仅「\(appName)」应用",
+                        rank: 3, warning: nil) { ime, name in
+                        Rule(name: name, bundleId: self.ctx.bundleId, domClassAny: [cls], inputSource: ime)
+                    })
+                }
             }
         }
 
-        // 有网址：整站规则
+        // ③ 整个网站
         if !host.isEmpty {
-            options.append(PrecisionOption(title: "整个「\(host)」网站") { ime, name in
+            options.append(PrecisionOption(
+                title: "整个「\(host)」网站",
+                rank: 2, warning: nil) { ime, name in
                 Rule(name: name, urlRegex: NSRegularExpression.escapedPattern(for: host), inputSource: ime)
             })
         }
 
-        // 总是可以：整个应用
+        // ④ 整个应用
         if !ctx.bundleId.isEmpty {
-            options.append(PrecisionOption(title: "整个「\(appName)」应用") { ime, name in
+            options.append(PrecisionOption(
+                title: "整个「\(appName)」应用",
+                rank: 4, warning: nil) { ime, name in
                 Rule(name: name, bundleId: self.ctx.bundleId, inputSource: ime)
             })
         }
 
-        // 兜底：万一啥都没抓到
+        // 兜底
         if options.isEmpty {
-            options.append(PrecisionOption(title: "整个当前应用") { ime, name in
+            options.append(PrecisionOption(
+                title: "整个当前应用",
+                rank: 9, warning: nil) { ime, name in
                 Rule(name: name, bundleId: self.ctx.bundleId, inputSource: ime)
             })
         }
+
+        // 按 rank 排序：最推荐的在最前面（默认选中）
+        options.sort { $0.rank < $1.rank }
     }
 
     // MARK: - UI
@@ -113,6 +151,8 @@ final class CaptureSheet: NSObject {
         }
 
         for o in options { precisionPopup.addItem(withTitle: o.title) }
+        precisionPopup.target = self
+        precisionPopup.action = #selector(precisionChanged)
 
         imeItems = InputSource.selectableList()
         for i in imeItems { imePopup.addItem(withTitle: i.localizedName) }
@@ -123,8 +163,15 @@ final class CaptureSheet: NSObject {
 
         nameField.placeholderString = "留空自动命名"
 
+        // 冲突/提示行（随选项变化）
+        warningLabel.font = .systemFont(ofSize: 11)
+        warningLabel.textColor = .systemOrange
+        warningLabel.lineBreakMode = .byWordWrapping
+        warningLabel.maximumNumberOfLines = 2
+
         let rows = NSStackView(views: [
-            labeledRow(label("匹配范围："), precisionPopup),
+            labeledRow(label("识别依据："), precisionPopup),
+            labeledRow(label(""), warningLabel),
             labeledRow(label("切换到："), imePopup),
             labeledRow(label("规则名："), nameField),
         ])
@@ -147,9 +194,10 @@ final class CaptureSheet: NSObject {
         btnStack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(btnStack)
 
-        precisionPopup.widthAnchor.constraint(equalToConstant: 360).isActive = true
-        imePopup.widthAnchor.constraint(equalToConstant: 360).isActive = true
-        nameField.widthAnchor.constraint(equalToConstant: 360).isActive = true
+        precisionPopup.widthAnchor.constraint(equalToConstant: 400).isActive = true
+        imePopup.widthAnchor.constraint(equalToConstant: 400).isActive = true
+        nameField.widthAnchor.constraint(equalToConstant: 400).isActive = true
+        warningLabel.widthAnchor.constraint(equalToConstant: 400).isActive = true
 
         NSLayoutConstraint.activate([
             infoBox.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
@@ -163,6 +211,14 @@ final class CaptureSheet: NSObject {
             btnStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
             btnStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
         ])
+
+        precisionChanged()   // 初始化警告行
+    }
+
+    @objc private func precisionChanged() {
+        let idx = precisionPopup.indexOfSelectedItem
+        guard idx >= 0, idx < options.count else { warningLabel.stringValue = ""; return }
+        warningLabel.stringValue = options[idx].warning ?? ""
     }
 
     private func labeledRow(_ label: NSTextField, _ control: NSView) -> NSView {
@@ -177,13 +233,15 @@ final class CaptureSheet: NSObject {
         var lines = ["✅ 已捕获焦点："]
         let appName = ctx.appName.isEmpty ? ctx.bundleId : ctx.appName
         if !appName.isEmpty { lines.append("· 应用：\(appName)") }
+        if let kw = CaptureSheet.descKeyword(ctx.axDescription) {
+            lines.append("· 控件描述：\(kw)")
+        }
         if let cls = CaptureSheet.primaryClass(ctx.domClasses) {
             let zone = Rule.zoneName(for: ctx.domClasses)
-            lines.append("· 控件：\(zone ?? cls)")
+            lines.append("· 控件类型：\(zone ?? cls)")
         }
         let host = effectiveHost()
         if !host.isEmpty { lines.append("· 网站：\(host)") }
-        if !ctx.windowTitle.isEmpty { lines.append("· 窗口标题：\(ctx.windowTitle)") }
         return lines.joined(separator: "\n")
     }
 
@@ -207,6 +265,7 @@ final class CaptureSheet: NSObject {
     private func autoGeneratedName(ime: String) -> String {
         let imeName = InputSwitcherIMEName.display(ime)
         if let zone = Rule.zoneName(for: ctx.domClasses) { return "\(zone)→\(imeName)" }
+        if let kw = CaptureSheet.descKeyword(ctx.axDescription) { return "\(kw)→\(imeName)" }
         let host = effectiveHost()
         if !host.isEmpty { return "\(host)→\(imeName)" }
         let appName = ctx.appName.isEmpty ? ctx.bundleId : ctx.appName
@@ -232,6 +291,38 @@ final class CaptureSheet: NSObject {
     static func primaryClass(_ classes: [String]) -> String? {
         let ignore: Set<String> = ["ql-blank", "monaco-button", "monaco-text-button"]
         return classes.first { !ignore.contains($0) } ?? classes.first
+    }
+
+    /// 从控件描述里提取一个稳定、独特的关键词，用于 descRegex 识别。
+    /// 例如 "Chat Input (Ask Mode), ask questions..." → "Chat Input"
+    ///      "Terminal 1, claude-internal Run the command..." → "claude"
+    /// 取不到合适关键词则返回 nil。
+    static func descKeyword(_ desc: String) -> String? {
+        let d = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard d.count >= 2 else { return nil }
+        // 已知高价值关键词，命中即用（顺序 = 优先级）
+        let known = ["Chat Input", "claude", "gemini", "codex", "aider", "Copilot", "聊天", "对话"]
+        for k in known {
+            if d.range(of: k, options: .caseInsensitive) != nil { return k }
+        }
+        // 否则取描述开头到第一个标点/换行前的短语（去掉太长的）
+        let separators = CharacterSet(charactersIn: ",，.。:：;；(（\n")
+        if let first = d.components(separatedBy: separators).first {
+            let phrase = first.trimmingCharacters(in: .whitespaces)
+            if phrase.count >= 2 && phrase.count <= 20 { return phrase }
+        }
+        return nil
+    }
+
+    /// 检查某个 DOM class 是否已被现有规则使用（撞车检测）。
+    /// 返回冲突规则的名字；无冲突返回 nil。
+    static func classConflict(_ cls: String) -> String? {
+        for rule in Config.shared.ruleSet.rules {
+            if let classes = rule.domClassAny, classes.contains(cls) {
+                return rule.name
+            }
+        }
+        return nil
     }
 
     /// 从 URL 提取主机名（去掉 www.）

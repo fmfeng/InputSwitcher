@@ -6,6 +6,10 @@
 *.app/
 *.zip
 
+# 原始录屏（大文件，只提交 assets/ 里压缩后的 gif/mp4）
+/demo.mov
+*.mov
+
 # macOS
 .DS_Store
 

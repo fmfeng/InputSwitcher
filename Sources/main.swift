@@ -90,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSSound.beep()
             return
         }
+        // 始终记录捕获到的内容，便于排查"抓错控件"问题
+        DebugLog.forceWrite("【捕获】\(ctx.debugLine)")
         let sheet = CaptureSheet(context: ctx)
         sheet.onDone = { [weak self] rule in
             guard let self = self else { return }

@@ -19,6 +19,15 @@ enum DebugLog {
 
     static func write(_ message: String) {
         guard enabled else { return }
+        append(message)
+    }
+
+    /// 无视 enabled 开关，强制写入（用于捕获等需要排查的关键操作）。
+    static func forceWrite(_ message: String) {
+        append(message)
+    }
+
+    private static func append(_ message: String) {
         let line = "[\(formatter.string(from: Date()))] \(message)\n"
         queue.async {
             guard let data = line.data(using: .utf8) else { return }
